@@ -1,9 +1,13 @@
 package com.hmdp.service.impl;
 
+import cn.hutool.core.bean.BeanUtil;
 import cn.hutool.core.util.RandomUtil;
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.extension.conditions.query.QueryChainWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.hmdp.dto.LoginFormDTO;
 import com.hmdp.dto.Result;
+import com.hmdp.dto.UserDTO;
 import com.hmdp.entity.User;
 import com.hmdp.mapper.UserMapper;
 import com.hmdp.service.IUserService;
@@ -39,7 +43,21 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         if(!RegexUtils.isPhoneInvalid(phone)) return Result.fail("手机号格式错误");
         String validcode = session.getAttribute("code").toString();
         if(code == null || !code.equals(validcode)) return Result.fail("验证码错误");
+        User user = query().eq("phone", phone).one();
+        if(user == null){
+            user = createUserWithPhone(phone);
+        }
+        UserDTO userDTO = BeanUtil.copyProperties(user, UserDTO.class);
+        session.setAttribute("user", userDTO);
 
         return Result.ok();
+    }
+
+    private User createUserWithPhone(String phone) {
+        User user = new User();
+        user.setPhone(phone);
+        user.setNickName("user_" + RandomUtil.randomString(10));
+        save(user);
+        return user;
     }
 }
