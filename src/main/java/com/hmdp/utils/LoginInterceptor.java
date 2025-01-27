@@ -21,27 +21,13 @@ import java.util.concurrent.TimeUnit;
  */
 public class LoginInterceptor implements HandlerInterceptor {
 
-    private StringRedisTemplate stringRedisTemplate;
-
-    public LoginInterceptor(StringRedisTemplate stringRedisTemplate){
-        this.stringRedisTemplate = stringRedisTemplate;
-    }
 
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler){
-        String token = request.getHeader("authorization");
-        if(token == null){
+        if(UserHolder.getUser() == null){
             response.setStatus(401);
             return false;
         }
-        Map<Object, Object> entries = stringRedisTemplate.opsForHash().entries(token);
-        if(entries.isEmpty()){
-            response.setStatus(401);
-            return false;
-        }
-        UserDTO userDTO = BeanUtil.fillBeanWithMap(entries, new UserDTO(), false);
-        UserHolder.saveUser(userDTO);
-        stringRedisTemplate.expire(RedisConstants.LOGIN_USER_KEY + token, RedisConstants.LOGIN_USER_TTL, TimeUnit.MINUTES);
         return true;
     }
 
