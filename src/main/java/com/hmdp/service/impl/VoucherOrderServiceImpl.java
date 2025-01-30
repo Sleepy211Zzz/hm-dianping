@@ -85,7 +85,7 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
 
     }
     private void HandleVoucherOrder(VoucherOrder voucherOrder) {
-        return voucherService.createVolucjerOrder(voucherOrder);
+        voucherService.createVolucjerOrder(voucherOrder);
     }
     
     @Autowired
@@ -145,6 +145,7 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
 //        } finally {
 //            lock.unlock();
 //        }
+        return Result.ok();
     }
 
 
