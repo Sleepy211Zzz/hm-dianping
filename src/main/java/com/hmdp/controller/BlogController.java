@@ -1,6 +1,7 @@
 package com.hmdp.controller;
 
 
+import cn.hutool.core.util.BooleanUtil;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.hmdp.dto.Result;
 import com.hmdp.dto.UserDTO;
@@ -8,8 +9,11 @@ import com.hmdp.entity.Blog;
 import com.hmdp.entity.User;
 import com.hmdp.service.IBlogService;
 import com.hmdp.service.IUserService;
+import com.hmdp.utils.RedisConstants;
 import com.hmdp.utils.SystemConstants;
 import com.hmdp.utils.UserHolder;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.web.bind.annotation.*;
 
 import javax.annotation.Resource;
@@ -32,6 +36,19 @@ public class BlogController {
     @Resource
     private IUserService userService;
 
+    @Autowired
+    private StringRedisTemplate stringRedisTemplate;
+
+    @GetMapping("/{id}")
+    public Result queryBlogByid(@PathVariable("id") Long id){
+        return blogService.queryBlogByid(id);
+    }
+
+    @GetMapping("/likes/{id}")
+    public Result queryBloglikes(@PathVariable("id") Long id){
+        return blogService.queryBloglikes(id);
+    }
+
     @PostMapping
     public Result saveBlog(@RequestBody Blog blog) {
         // 获取登录用户
@@ -46,9 +63,9 @@ public class BlogController {
     @PutMapping("/like/{id}")
     public Result likeBlog(@PathVariable("id") Long id) {
         // 修改点赞数量
-        blogService.update()
-                .setSql("liked = liked + 1").eq("id", id).update();
-        return Result.ok();
+//        blogService.update()
+//                .setSql("liked = liked + 1").eq("id", id).update();
+        return blogService.likeBlog(id);
     }
 
     @GetMapping("/of/me")
@@ -77,6 +94,10 @@ public class BlogController {
             User user = userService.getById(userId);
             blog.setName(user.getNickName());
             blog.setIcon(user.getIcon());
+
+            Boolean member = stringRedisTemplate.opsForSet().isMember(RedisConstants.BLOG_LIKED_KEY + blog.getId(), userId.toString());
+
+            blog.setIsLike(BooleanUtil.isTrue(member));
         });
         return Result.ok(records);
     }
