@@ -1,5 +1,6 @@
 package com.hmdp.service.impl;
 
+import cn.hutool.core.bean.BeanUtil;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.hmdp.dto.Result;
@@ -19,6 +20,7 @@ import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
 import org.springframework.aop.framework.AopContext;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.redis.connection.stream.*;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
@@ -26,8 +28,11 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import javax.annotation.PostConstruct;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.Arrays;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ExecutorService;
@@ -62,6 +67,7 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
 
     private BlockingQueue<VoucherOrder> blockingQueue = new ArrayBlockingQueue<>(1024 * 1024);
     private static final ExecutorService SECKILL_ORDER_EXECUTOR = Executors.newSingleThreadExecutor();
+    public static final String queueName = "streams.order";
 
     @PostConstruct
     private void init(){
@@ -74,10 +80,47 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
         public void run() {
             while (true){
                 try {
-                    VoucherOrder take = blockingQueue.take();
-                    HandleVoucherOrder(take);
-                } catch (InterruptedException e) {
-                    throw new RuntimeException(e);
+                    List<MapRecord<String, Object, Object>> read = stringRedisTemplate.opsForStream().read(
+                            Consumer.from("g1", "c1"),
+                            StreamReadOptions.empty().count(1).block(Duration.ofSeconds(2)),
+                            StreamOffset.create(queueName, ReadOffset.lastConsumed())
+                    );
+                    if(read == null | read.isEmpty()) continue;
+                    MapRecord<String, Object, Object> entries = read.get(0);
+                    Map<Object, Object> value = entries.getValue();
+                    VoucherOrder voucherOrder = BeanUtil.fillBeanWithMap(value, new VoucherOrder(), true);
+                    stringRedisTemplate.opsForStream().acknowledge(queueName, "g1", entries.getId());
+//                    VoucherOrder take = blockingQueue.take();
+                    HandleVoucherOrder(voucherOrder);
+                } catch (Exception e) {
+                    handlePendingList();
+                }
+
+            }
+        }
+
+        private void handlePendingList() {
+            while (true){
+                try {
+                    List<MapRecord<String, Object, Object>> read = stringRedisTemplate.opsForStream().read(
+                            Consumer.from("g1", "c1"),
+                            StreamReadOptions.empty().count(1),
+                            StreamOffset.create(queueName, ReadOffset.from("0"))
+                    );
+                    if(read == null | read.isEmpty()) break;
+                    MapRecord<String, Object, Object> entries = read.get(0);
+                    Map<Object, Object> value = entries.getValue();
+                    VoucherOrder voucherOrder = BeanUtil.fillBeanWithMap(value, new VoucherOrder(), true);
+                    stringRedisTemplate.opsForStream().acknowledge(queueName, "g1", entries.getId());
+//                    VoucherOrder take = blockingQueue.take();
+                    HandleVoucherOrder(voucherOrder);
+                } catch (Exception e) {
+                    log.error("处理异常");
+                    try {
+                        Thread.sleep(2000);
+                    } catch (InterruptedException ex) {
+                        throw new RuntimeException(ex);
+                    }
                 }
 
             }
@@ -106,6 +149,7 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
             return Result.fail("优惠卷库存不足");
         }
         Long userid = UserHolder.getUser().getId();
+        long order = redisIdWorker.nextId("order");
         String luaScript = "if(tonumber(redis.call('get', KEYS[1])) <= 0) then" +
                 "    return 1" +
                 "end" +
@@ -114,23 +158,24 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
                 "end" +
                 "redis.call('incrby', KEYS[1], -1)" +
                 "redis.call('sadd', KEYS[2], ARGV[1])" +
+                "redis.call('xadd', *, 'userId', ARGV[1], 'voucherId', ARGV[2], 'id', ARGV[3])" +
                 "return 0";
         Long result = (Long) redisTemplate.execute(
                 new DefaultRedisScript<>(luaScript, Long.class),
                 Arrays.asList(RedisConstants.SECKILL_STOCK_KEY + voucherId, RedisConstants.SECKILL_ORDER_KEY + userid),
-                voucher.getStock());
+                Arrays.asList(userid.toString(), voucherId.toString(), String.valueOf(order)));
 
         int r = result.intValue();
         if(r != 0){
             return Result.fail(r == 1 ? "库存不足" : "不能重复下单");
         }
-        long order = redisIdWorker.nextId("order");
-        VoucherOrder voucherOrder = new VoucherOrder();
-        voucherOrder.setId(order);
-        voucherOrder.setVoucherId(voucherId);
-        voucherOrder.setUserId(userid);
-
-        blockingQueue.add(voucherOrder);
+//
+//        VoucherOrder voucherOrder = new VoucherOrder();
+//        voucherOrder.setId(order);
+//        voucherOrder.setVoucherId(voucherId);
+//        voucherOrder.setUserId(userid);
+//
+//        blockingQueue.add(voucherOrder);
 
         //Lock lock = redissonClient.getLock("order:" + userid);
 //        //SimpleRedisLock simpleRedisLock = new SimpleRedisLock("order:" + userid, stringRedisTemplate);
