@@ -11,12 +11,19 @@ import com.hmdp.dto.UserDTO;
 import com.hmdp.entity.User;
 import com.hmdp.mapper.UserMapper;
 import com.hmdp.service.IUserService;
+import com.hmdp.utils.RedisConstants;
 import com.hmdp.utils.RegexUtils;
+import com.hmdp.utils.UserHolder;
+import lombok.val;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.redis.connection.BitFieldSubCommands;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 import javax.servlet.http.HttpSession;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
@@ -67,6 +74,49 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
 
         return Result.ok(token);
     }
+
+    @Override
+    public Result sign() {
+        val userId = UserHolder.getUser().getId();
+        LocalDateTime now = LocalDateTime.now();
+        String keyPre = now.format(DateTimeFormatter.ofPattern(":yyyyMM"));
+        String key = RedisConstants.USER_SIGN_KEY + userId + keyPre;
+        int dayOfMonth = now.getDayOfMonth() - 1;
+        stringRedisTemplate.opsForValue().setBit(key, dayOfMonth, true);
+
+        return Result.ok();
+    }
+
+    @Override
+    public Result signCount() {
+        val userId = UserHolder.getUser().getId();
+        LocalDateTime now = LocalDateTime.now();
+        String keyPre = now.format(DateTimeFormatter.ofPattern(":yyyyMM"));
+        String key = RedisConstants.USER_SIGN_KEY + userId + keyPre;
+        int dayOfMonth = now.getDayOfMonth() - 1;
+        List<Long> result = stringRedisTemplate.opsForValue().bitField(key, BitFieldSubCommands.create().get(BitFieldSubCommands.BitFieldType.unsigned(dayOfMonth)).valueAt(0));
+        if(result == null || result.isEmpty()){
+            return Result.ok(0);
+        }
+
+        Long number = result.get(0);
+
+        if(number == null || number == 0){
+            return Result.ok(0);
+        }
+
+        int count = 0;
+
+        while (number != 0){
+            if((number & 1) == 1){
+                count++;
+            }
+            number >>>= 1;
+        }
+
+        return Result.ok(count);
+    }
+
 
     private User createUserWithPhone(String phone) {
         User user = new User();
